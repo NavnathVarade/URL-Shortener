@@ -1,0 +1,221 @@
+version: '3.9'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# URL Shortener — Local Development Stack
+# ─────────────────────────────────────────────────────────────────────────────
+# Services:
+#   api       — Node.js Express app (hot-reload via ts-node-dev)
+#   postgres  — PostgreSQL 15 with persistent volume
+#   redis     — Redis 7 with persistence (AOF)
+#   pgadmin   — Database GUI (dev only)
+#   redis-ui  — RedisInsight GUI (dev only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── API Server ──────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: url-shortener-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      BASE_URL: http://localhost:3000
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/url_shortener?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      REDIS_TLS: "false"
+      CACHE_TTL_SECONDS: 86400
+      CACHE_SHORT_URL_PREFIX: "url:"
+      SHORT_CODE_LENGTH: 7
+      MAX_URL_LENGTH: 2048
+      ALLOWED_SCHEMES: "http,https"
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX_REQUESTS: 100
+      RATE_LIMIT_SHORTEN_MAX: 10
+      ANALYTICS_QUEUE_NAME: analytics
+      ANALYTICS_WORKER_CONCURRENCY: 5
+      LOG_LEVEL: info
+      LOG_PRETTY: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - url-shortener-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ── API Dev (with hot reload) ────────────────────────────────────────────────
+  api-dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: url-shortener-dev
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+      - "9229:9229"  # Node.js debugger
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      BASE_URL: http://localhost:3001
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/url_shortener?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 0
+      REDIS_TLS: "false"
+      CACHE_TTL_SECONDS: 86400
+      CACHE_SHORT_URL_PREFIX: "url:"
+      SHORT_CODE_LENGTH: 7
+      MAX_URL_LENGTH: 2048
+      ALLOWED_SCHEMES: "http,https"
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX_REQUESTS: 1000
+      RATE_LIMIT_SHORTEN_MAX: 100
+      ANALYTICS_QUEUE_NAME: analytics
+      ANALYTICS_WORKER_CONCURRENCY: 2
+      LOG_LEVEL: debug
+      LOG_PRETTY: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - url-shortener-network
+    profiles:
+      - dev
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: url-shortener-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: url_shortener
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./prisma/migrations/0001_init/migration.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+    networks:
+      - url-shortener-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=768MB
+        -c maintenance_work_mem=64MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c work_mem=4MB
+        -c min_wal_size=1GB
+        -c max_wal_size=4GB
+        -c log_min_duration_statement=100
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: url-shortener-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./docker/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - url-shortener-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ── PgAdmin (dev only) ───────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: url-shortener-pgadmin
+    restart: unless-stopped
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - url-shortener-network
+    depends_on:
+      - postgres
+    profiles:
+      - dev
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Volumes
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  pgadmin-data:
+    driver: local
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Networks
+# ─────────────────────────────────────────────────────────────────────────────
+networks:
+  url-shortener-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

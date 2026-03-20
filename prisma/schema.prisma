@@ -1,0 +1,68 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Prisma Schema — URL Shortener (Production Grade)
+// ─────────────────────────────────────────────────────────────────────────────
+// Database: PostgreSQL 15+
+// Strategy:
+//   - urls table stores all short → long URL mappings
+//   - click_events stores per-click analytics (write-heavy, time-series)
+//   - Indexes optimized for read-heavy redirect path (shortCode lookup)
+//   - click_events uses composite index (shortCode + clickedAt) for time range
+//     analytics queries
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Url — core entity
+// ─────────────────────────────────────────────────────────────────────────────
+model Url {
+  id          String   @id @default(uuid()) @db.Uuid
+  shortCode   String   @unique @db.VarChar(16)
+  originalUrl String   @db.VarChar(2048)
+  userId      String?  @db.VarChar(255)      // future: user accounts
+  isActive    Boolean  @default(true)
+  clickCount  BigInt   @default(0)
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  clickEvents ClickEvent[]
+
+  @@index([shortCode])                        // PK-like lookup for redirects
+  @@index([userId])                           // list URLs per user
+  @@index([createdAt])                        // time-range queries
+  @@index([expiresAt])                        // expiry cleanup job
+  @@map("urls")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ClickEvent — analytics (time-series, append-only)
+// ─────────────────────────────────────────────────────────────────────────────
+// NOTE: At massive scale (365B records) this table should be range-partitioned
+//       by clickedAt in PostgreSQL using PARTITION BY RANGE (clickedAt).
+//       Prisma doesn't natively manage partitions; the SQL migration handles it.
+// ─────────────────────────────────────────────────────────────────────────────
+model ClickEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  shortCode   String   @db.VarChar(16)
+  ipAddress   String?  @db.VarChar(45)        // IPv4 or IPv6
+  userAgent   String?  @db.VarChar(512)
+  referer     String?  @db.VarChar(2048)
+  country     String?  @db.VarChar(2)         // ISO 3166-1 alpha-2
+  device      String?  @db.VarChar(50)
+  clickedAt   DateTime @default(now()) @db.Timestamptz
+
+  url Url @relation(fields: [shortCode], references: [shortCode], onDelete: Cascade)
+
+  @@index([shortCode, clickedAt(sort: Desc)])  // analytics range queries
+  @@index([clickedAt])                         // partition pruning / cleanup
+  @@map("click_events")
+}
