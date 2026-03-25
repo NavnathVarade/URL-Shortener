@@ -164,7 +164,8 @@ export class UrlService {
       SELECT nextval('url_seq') AS nextval
     `;
     const seqVal = rows[0]?.nextval ?? BigInt(Date.now());
-    const code = encodeBase62(seqVal);
+    const offset = env.SHORT_CODE_OFFSET; // already bigint
+    const code = encodeBase62(seqVal + offset);
     // Pad to fixed length for consistent URLs
     return code.padStart(env.SHORT_CODE_LENGTH, '0');
   }

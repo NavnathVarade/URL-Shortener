@@ -27,7 +27,7 @@ const envSchema = z.object({
   REDIS_TLS: z  
   .string()
   .transform((val) => val === 'true')
-  .default('false'),                                                                                 // v2
+  .default('false'),                                                                                 
 
   // Cache
   CACHE_TTL_SECONDS: z.coerce.number().default(86400),
@@ -35,6 +35,7 @@ const envSchema = z.object({
 
   // URL Shortener
   SHORT_CODE_LENGTH: z.coerce.number().min(5).max(16).default(7),
+  SHORT_CODE_OFFSET: z.coerce.bigint().default(1000000n),
   MAX_URL_LENGTH: z.coerce.number().default(2048),
   ALLOWED_SCHEMES: z.string().default('http,https'),
 
