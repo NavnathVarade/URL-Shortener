@@ -217,7 +217,7 @@ Jobs are retried 3 times with exponential backoff on failure.
 
 ### 1. Clone and configure
 ```bash
-git clone https://github.com/your-org/url-shortener.git
+git clone https://github.com/NavnathVarade/URL-Shortener.git
 cd url-shortener
 cp .env.example .env
 # Edit .env with your settings
@@ -633,4 +633,4 @@ Test coverage targets: 80% lines, 80% functions, 70% branches.
 
 ## 📄 License
 
-MIT © 2024 Your Organization
+MIT © 2026 Navnath Varade
